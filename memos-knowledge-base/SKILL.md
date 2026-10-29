@@ -151,12 +151,42 @@ Upload is JSON (no multipart): `POST /api/v1/attachments` with a **flat** body (
 ```bash
 B64=$(base64 -w0 file.pdf)
 curl -sS -X POST -H "Authorization: Bearer $MEMOS_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"filename\":\"file.pdf\",\"type\":\"application/pdf\",\"content\":\"$B64\",\"memo\":\"memos/42\"}" \
+  -d "{\"filename\":\"file.pdf\",\"type\":\"application/pdf\",\"content\":\"$B64\"}" \
   "https://note.canmanciu.top/api/v1/attachments"
 ```
 
-- The `memo` field at create often does NOT stick — always follow up with `PATCH /api/v1/attachments/{name}?updateMask=memo` body `{"name":"attachments/{id}","memo":"memos/42"}`. PATCH occasionally returns 200 but silently drops the link — verify via `GET /api/v1/memos/42` and retry/recreate if `attachments` is missing.
-- Memos renders Markdown only: raw HTML in memo content is escaped to text, CSS/JS never runs. For styled documents, attach the original file.
+Then bind it to a memo with **SetMemoAttachments** (v0.31 removed `memo` from UpdateAttachment — only `filename` is patchable there; the create-time `memo` field and old `?updateMask=memo` PATCH are silently ignored):
+
+```bash
+curl -sS -X PATCH -H "Authorization: Bearer $MEMOS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"memos/42","attachments":[{"name":"attachments/{id}"}]}' \
+  "https://note.canmanciu.top/api/v1/memos/42/attachments"
+```
+
+This **replaces the full attachment set** (idempotent, empty list clears). Always verify with `GET /api/v1/memos/42` that `attachments` landed.
+
+- `CreateMemoRequest` also accepts `attachments` at creation time.
+- Memos serves attachment downloads as `application/octet-stream` + `Content-Disposition: attachment` (anti-XSS; `text/html` etc. are in a hardcoded unsafe list) — attached HTML never renders inline in the browser, it downloads.
+- Memos renders Markdown only: raw HTML in memo content is escaped to text, CSS/JS never runs. For long styled documents the established pattern is: full-text Markdown body + original file attached.
+
+### 4c. Spaces (v0.31)
+
+Spaces are placement buckets independent of visibility. `Memo.space` = where the memo lives; `visibility` = who can read it (PRIVATE/PROTECTED/PUBLIC, plus `SPACE` = active members of that space). A dedicated space exists for research reports: `spaces/b3d1abd7-2546-4205-bca7-95f01c3e28a6` (调研报告 📊). Default new research/long-form reports into it, keep visibility PRIVATE unless the user says otherwise.
+
+```bash
+# List spaces the caller belongs to
+curl -sS -H "Authorization: Bearer $MEMOS_TOKEN" "https://note.canmanciu.top/api/v1/spaces"
+
+# Create a space (caller becomes ADMIN); flat body
+curl -sS -X POST -H "Authorization: Bearer $MEMOS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"title":"新空间","description":"...","icon":{"emoji":"📁"}}' \
+  "https://note.canmanciu.top/api/v1/spaces"
+
+# Put a memo into a space (PATCH memo, updateMask=space)
+curl -sS -X PATCH -H "Authorization: Bearer $MEMOS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"memos/42","space":"spaces/{id}"}' \
+  "https://note.canmanciu.top/api/v1/memos/42?updateMask=space"
+```
 
 ### 5. Publish a blog post (PUBLIC memo)
 

@@ -1,6 +1,6 @@
 ---
 name: memos-knowledge-base
-description: Read, search, create, and update notes/memos on note.canmanciu.top (Memos v0.29.1) via the REST API using a Bearer token. Use when the user asks to (1) recall / search / summarize something from their notes or knowledge base, (2) save / jot / record a new note or memo, (3) publish or draft a blog post (PUBLIC memo), (4) update or delete an existing memo. Do NOT use for the demo site (demo.canmanciu.top is SSH-only, not API-driven) or for sale.goibuy.cn.
+description: Read, search, create, and update notes/memos on note.canmanciu.top (Memos v0.31.0) via the REST API using a Bearer token. Use when the user asks to (1) recall / search / summarize something from their notes or knowledge base, (2) save / jot / record a new note or memo, (3) publish or draft a blog post (PUBLIC memo), (4) update or delete an existing memo. Do NOT use for the demo site (demo.canmanciu.top is SSH-only, not API-driven) or for sale.goibuy.cn.
 ---
 
 # Memos Knowledge Base Skill
@@ -135,12 +135,28 @@ curl -sS -H "Authorization: Bearer $MEMOS_TOKEN" \
 
 ### 4. Create a memo (PRIVATE note)
 
+Content length limit: instance setting `MEMO_RELATED.content_length_limit` (currently 131072 bytes, **counted in UTF-8 bytes** — Chinese ≈ 3 bytes/char; floor is 8192, adjustable via `PATCH /api/v1/instance/settings/MEMO_RELATED?updateMask=memo_related_setting` — note: PATCH replaces the whole `memoRelatedSetting` block, include `reactions`/`enableDoubleClickEdit` or they get wiped). Long articles fit in a single memo; no need to split.
+
 ```bash
 curl -sS -X POST -H "Authorization: Bearer $MEMOS_TOKEN" \
   -H "Content-Type: application/json" \
   -d "$(jq -n --arg c "$CONTENT" '{content: $c, visibility: "PRIVATE"}')" \
   "https://note.canmanciu.top/api/v1/memos"
 ```
+
+### 4b. Attach a file to a memo (v0.31 attachments API)
+
+Upload is JSON (no multipart): `POST /api/v1/attachments` with a **flat** body (gRPC-gateway `body:"attachment"` unwraps it — do NOT nest under `"attachment"`), `content` is base64:
+
+```bash
+B64=$(base64 -w0 file.pdf)
+curl -sS -X POST -H "Authorization: Bearer $MEMOS_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"filename\":\"file.pdf\",\"type\":\"application/pdf\",\"content\":\"$B64\",\"memo\":\"memos/42\"}" \
+  "https://note.canmanciu.top/api/v1/attachments"
+```
+
+- The `memo` field at create often does NOT stick — always follow up with `PATCH /api/v1/attachments/{name}?updateMask=memo` body `{"name":"attachments/{id}","memo":"memos/42"}`. PATCH occasionally returns 200 but silently drops the link — verify via `GET /api/v1/memos/42` and retry/recreate if `attachments` is missing.
+- Memos renders Markdown only: raw HTML in memo content is escaped to text, CSS/JS never runs. For styled documents, attach the original file.
 
 ### 5. Publish a blog post (PUBLIC memo)
 
@@ -249,4 +265,5 @@ When creating a memo from a conversation, **auto-add tags** based on topic if th
 
 ## Reference
 
-- Server topology: the Memos instance runs on the user's triton server (SSH-only for ops; this skill only uses the HTTPS API).
+- Server topology (verified 2026-10-29): Memos runs as systemd `memos.service` on `root@1.12.55.32` (CentOS 9, Tencent VM) — binary `/usr/local/bin/memos`, SQLite at `/var/lib/memos/memos_prod.db`, listens on 127.0.0.1:5230 behind nginx. This skill only uses the HTTPS API; server ops (upgrade/backup) go via SSH (key `~/.ssh/id_ed25519` works from the Windows PC).
+- Upgrade runbook (done 2026-10-29, 0.29.1 → 0.31.0): backup with `sqlite3 memos_prod.db "VACUUM INTO ..."` + copy binary, download release tarball + verify `checksums.txt`, `systemctl stop memos && install -m 0755 memos /usr/local/bin/memos && systemctl start memos`, migrations apply automatically. Backups kept in `/root/backup-memos-upgrade/`.
